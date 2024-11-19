@@ -1,0 +1,5 @@
+docs/*
+data/*
+__pycache__/
+save/
+logs/
