@@ -53,7 +53,7 @@ class TrainingArguments(transformers.TrainingArguments):
 
 @dataclass
 class LoraArguments:
-    lora_r: int = 2
+    lora_r: int = 64
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_target_modules: List[str] = field(
@@ -360,14 +360,8 @@ def train():
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
-        device_map=device_map,
         trust_remote_code=True,
-        quantization_config=GPTQConfig(
-            bits=4, disable_exllama=True
-        )
-        if training_args.use_lora and lora_args.q_lora
-        else None,
-        **model_load_kwargs,
+
     )
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -379,6 +373,8 @@ def train():
         trust_remote_code=True,
     )
     tokenizer.pad_token_id = tokenizer.eod_id
+
+    # import ipdb; ipdb.set_trace()
 
     if training_args.use_lora:
         lora_config = LoraConfig(

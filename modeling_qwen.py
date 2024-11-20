@@ -1027,7 +1027,6 @@ class QWenLMHeadModel(QWenPreTrainedModel):
         if os.path.isdir(pretrained_model_name_or_path):
             # Local Directory of Models
             mel_filters_path = os.path.join(pretrained_model_name_or_path, 'mel_filters.npz')
-            print(mel_filters_path)
             tgt_cache_path = os.path.join(os.path.dirname(__file__), 'mel_filters.npz')
             shutil.copy(mel_filters_path, tgt_cache_path)
         else:

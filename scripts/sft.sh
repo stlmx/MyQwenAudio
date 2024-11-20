@@ -2,7 +2,10 @@
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 DIR=`pwd`
 
-GPUS_PER_NODE=3
+export NCCL_P2P_DISABLE="1"
+export NCCL_IB_DISABLE="1" 
+
+GPUS_PER_NODE=6
 
 # Number of GPU workers, for single-worker training, please set to 1
 NNODES=${NNODES:-1}
@@ -16,13 +19,13 @@ MASTER_ADDR=${MASTER_ADDR:-localhost}
 # The port for communication
 MASTER_PORT=${MASTER_PORT:-6001}
 
-MODEL="/data/limingxuan/hf_home/Qwen-Audio" # Set the path if you do not want to load from huggingface directly
+MODEL="/root/autodl-tmp/hf_home/Qwen-Audio" # Set the path if you do not want to load from huggingface directly
 # ATTENTION: specify the path to your training data, which should be a json file consisting of a list of conversations.
-DATA="/data/limingxuan/Qwen-Audio/data/emov_db/qa_data.jsonl"     # data path
+DATA="/root/codes/MyQwenAudio/data/emov_db/qa_data.jsonl"     # data path
 SAVE="./save/qwen-audio-chat"       # save path
 DS_CONFIG_PATH="ds_zero3.json"
 USE_LORA=False
-Q_LORA=False
+Q_LORA=True
 
 function usage() {
     echo '
@@ -65,15 +68,7 @@ while [[ "$1" != "" ]]; do
 done
 
 
-DISTRIBUTED_ARGS="
-    --nproc_per_node $GPUS_PER_NODE \
-    --nnodes $NNODES \
-    --node_rank $NODE_RANK \
-    --master_addr $MASTER_ADDR \
-    --master_port $MASTER_PORT
-"
-
-torchrun $DISTRIBUTED_ARGS /data/limingxuan/Qwen-Audio/train/train.py \
+deepspeed  --num_gpus=${GPUS_PER_NODE}  /root/codes/MyQwenAudio/train/train.py \
     --model_name_or_path $MODEL \
     --data_path $DATA \
     --fp16 True \
@@ -82,7 +77,7 @@ torchrun $DISTRIBUTED_ARGS /data/limingxuan/Qwen-Audio/train/train.py \
     --num_train_epochs 5 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 32 \
+    --gradient_accumulation_steps 4 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 100 \

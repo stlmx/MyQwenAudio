@@ -3,3 +3,4 @@ data/*
 __pycache__/
 save/
 logs/
+tmp_trainer/
