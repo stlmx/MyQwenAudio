@@ -18,7 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.generation import GenerationConfig
 from pydub import AudioSegment
 
-DEFAULT_CKPT_PATH = 'Qwen/Qwen-Audio-Chat'
+DEFAULT_CKPT_PATH = "/root/autodl-tmp/merged_model"
 
 
 def _get_args():
@@ -31,7 +31,7 @@ def _get_args():
                         help="Create a publicly shareable link for the interface.")
     parser.add_argument("--inbrowser", action="store_true", default=False,
                         help="Automatically launch the interface in a new tab on the default browser.")
-    parser.add_argument("--server-port", type=int, default=8000,
+    parser.add_argument("--server-port", type=int, default=6006,
                         help="Demo server port.")
     parser.add_argument("--server-name", type=str, default="127.0.0.1",
                         help="Demo server name.")
@@ -217,7 +217,7 @@ Qwen-Audio-Chat <a href="https://modelscope.cn/models/qwen/Qwen-Audio-Chat/summa
         chatbot = gr.Chatbot(label='Qwen-Audio-Chat', elem_classes="control-height", height=750)
         query = gr.Textbox(lines=2, label='Input')
         task_history = gr.State([])
-        mic = gr.Audio(source="microphone", type="filepath")
+        mic = gr.Audio(sources="microphone", type="filepath")
 
         with gr.Row():
             empty_bin = gr.Button("🧹 Clear History (清除历史)")
@@ -242,11 +242,11 @@ including hate speech, violence, pornography, deception, etc. \
 包括但不限于仇恨言论、暴力、色情、欺诈相关的有害信息。)""")
 
     demo.queue().launch(
-        share=args.share,
+        share=True,
         inbrowser=args.inbrowser,
         server_port=args.server_port,
         server_name=args.server_name,
-        file_directories=["/tmp/"]
+        # file_directories=["/tmp/"]
     )
 
 

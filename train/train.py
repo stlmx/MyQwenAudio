@@ -335,7 +335,6 @@ def train():
                 "FSDP or ZeRO3 are incompatible with QLoRA."
             )
 
-    # *********** Load Model & Tokenizer ***********
     is_chat_model = 'chat' in model_args.model_name_or_path.lower()
     if (
             training_args.use_lora
@@ -402,6 +401,7 @@ def train():
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length
     )
+
     data_collator = CustomDataCollator(tokenizer=tokenizer)
     trainer = Trainer(
         model=model, 

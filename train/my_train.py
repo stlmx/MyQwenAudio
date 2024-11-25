@@ -4,10 +4,12 @@ import torch
 import json
 from torch.utils.data import Dataset, DataLoader
 from dataclasses import dataclass, field
+from accelerate.utils import DistributedType
 
 import sys
 sys.path.append("/root/codes/MyQwenAudio")
 
+from modeling_qwen import QWenModel
 from tokenization_qwen import QWenTokenizer
 from transformers import DataCollatorWithPadding
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, HfArgumentParser
@@ -42,15 +44,12 @@ def read_jsonl(file_path):
 
 def build_model(args):
     model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.model_name_or_path, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.model_name_or_path, padding_side='right', trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.model_name_or_path, padding_side='right', trust_remote_code=True, model_max_length=1024)
 
     tokenizer.pad_token_id = tokenizer.eod_id
 
     return model, tokenizer
 
-
-class args:
-    model_name_or_path = "/root/autodl-tmp/hf_home/Qwen-Audio"
 
 
 ''''这段函数的作用
@@ -242,20 +241,24 @@ class CustomDataCollatorWithAudio(DataCollatorWithPadding):
 
 
 
-if __name__ == '__main__':
-
+def train():
+    
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    model, tokenizer = build_model(args=model_args)
 
-    model, tokenizer = build_model(model_args)
+    # *********** Load Dataset & Trainer ***********
+
+
     training_dataset = AudioDataset(data_path=data_args.data_path, tokenizer=tokenizer)
 
     collator = CustomDataCollatorWithAudio(tokenizer=tokenizer)
-    trainer = Trainer(model=model, tokenizer=tokenizer, train_dataset=training_dataset, data_collator=collator)
-
+    trainer = Trainer(model=model, tokenizer=tokenizer, train_dataset=training_dataset, data_collator=collator, args=training_args)
     trainer.train()
 
 
-    
+
+if __name__ == "__main__":
+    train()
     
