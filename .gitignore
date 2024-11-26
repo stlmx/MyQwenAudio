@@ -8,3 +8,4 @@ events*
 .vscode
 debug*
 *.pem
+*.pth

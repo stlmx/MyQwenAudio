@@ -95,7 +95,9 @@ def _replace_closed_tag(
 
     output_tokens = []
     end = 0
-    audio_idx = 0
+    # 为每种类型的标记维护单独的索引计数器
+    tag_counters = {tag: 0 for tag in start_tags}  # 初始化每种标记类型的计数器
+
     while True:
         start = _list_find(input_tokens, start_tags, end)
         if start == -1:
@@ -104,10 +106,16 @@ def _replace_closed_tag(
         tag_idx = start_tags.index(input_tokens[start])
         end = _list_find(input_tokens, (end_tags[tag_idx],), start)
         if end == -1:
-            raise ValueError("Unclosed image token")
-        output_tokens.extend(inclusive_replace_func(input_tokens[start: end + 1], audio_info, audio_idx))
+            raise ValueError(f"Unclosed token for {start_tags[tag_idx]}")
+
+        # 根据标记类型调用处理函数，并传递对应的计数器值
+        current_tag = start_tags[tag_idx]
+        output_tokens.extend(inclusive_replace_func(input_tokens[start: end + 1], audio_info, tag_counters[current_tag]))
+
+        # 更新计数器
+        tag_counters[current_tag] += 1
         end += 1
-        audio_idx += 1
+
     output_tokens.extend(exclusive_replace_func(input_tokens[end:]))
     return output_tokens
 
@@ -129,6 +137,39 @@ class QWenTokenizer(PreTrainedTokenizer):
         self.audio_start_tag = audio_start_tag
         self.audio_end_tag = audio_end_tag
         self.audio_pad_tag = "[[[AUDIO:modality]]]"
+
+        # * lmx: add image related special tokens.
+        image_start_tag='<img>'
+        image_end_tag='</img>'
+        image_pad_tag='<imgpad>'
+        ref_start_tag='<ref>'
+        ref_end_tag='</ref>'
+        box_start_tag='<box>'
+        box_end_tag='</box>'
+        quad_start_tag='<quad>'
+        quad_end_tag='</quad>'
+
+        self.image_start_tag = image_start_tag
+        self.image_end_tag = image_end_tag
+        self.image_pad_tag = image_pad_tag
+        self.ref_start_tag = ref_start_tag
+        self.ref_end_tag = ref_end_tag
+        self.box_start_tag = box_start_tag
+        self.box_end_tag = box_end_tag
+        self.quad_start_tag = quad_start_tag
+        self.quad_end_tag = quad_end_tag
+        self.IMAGE_ST = (
+            '<img>',
+            '</img>',
+            '<imgpad>',
+            '<ref>',
+            '</ref>',
+            '<box>',
+            '</box>',
+            '<quad>',
+            '</quad>'
+        )
+
 
         self.AUDIO_ST = (
             '[[[AUDIO:modality]]]',
@@ -197,16 +238,32 @@ class QWenTokenizer(PreTrainedTokenizer):
         self.special_tokens = {
             token: index
             for index, token in enumerate(
-                SPECIAL_TOKENS + self.AUDIO_ST, start=len(self.mergeable_ranks)
+                SPECIAL_TOKENS + self.AUDIO_ST + self.IMAGE_ST, start=len(self.mergeable_ranks)
 
             )
         }
+
+        self.img_start_id = self.special_tokens[self.image_start_tag]
+        self.img_end_id = self.special_tokens[self.image_end_tag]
+        self.img_pad_id = self.special_tokens[self.image_pad_tag]
+        self.ref_start_id = self.special_tokens[self.ref_start_tag]
+        self.ref_end_id = self.special_tokens[self.ref_end_tag]
+        self.box_start_id = self.special_tokens[self.box_start_tag]
+        self.box_end_id = self.special_tokens[self.box_end_tag]
+        self.quad_start_id = self.special_tokens[self.quad_start_tag]
+        self.quad_end_id = self.special_tokens[self.quad_end_tag]
+
         self.audio_start_id = self.special_tokens[self.audio_start_tag]
         self.audio_end_id = self.special_tokens[self.audio_end_tag]
         self.audio_pad_id = self.special_tokens[self.audio_pad_tag]
         print(f"audio_start_id: {self.audio_start_id}, "
               f"audio_end_id: {self.audio_end_id}, "
               f"audio_pad_id: {self.audio_pad_id}.")
+
+        self.image_special_tokens = set([
+            self.ref_start_id, self.ref_end_id, self.box_start_id, self.box_end_id,
+            self.quad_start_id, self.quad_end_id,
+        ])
 
         enc = tiktoken.Encoding(
             "Qwen",
@@ -321,12 +378,13 @@ class QWenTokenizer(PreTrainedTokenizer):
         tokens = []
         text = unicodedata.normalize("NFC", text)
 
-        # this implementation takes a detour: text -> token id -> token surface forms
+        # Encode text -> token ids -> token surface forms
         for t in self.tokenizer.encode(
                 text, allowed_special=allowed_special, disallowed_special=disallowed_special
         ):
             tokens.append(self.decoder[t])
 
+        # Define encoding for audio and image tokens
         def _encode_audiourl(audio_tokens, audio_info, audio_idx):
             assert audio_tokens[0] == self.audio_start_tag and audio_tokens[-1] == self.audio_end_tag
             audio_token_span = audio_info['audio_span_tokens'][audio_idx]
@@ -334,8 +392,31 @@ class QWenTokenizer(PreTrainedTokenizer):
                 self.audio_end_tag]
             return out_audio_tokens
 
-        return _replace_closed_tag(tokens, self.audio_start_tag, self.audio_end_tag, _encode_audiourl,
-                                   audio_info=audio_info)
+        def _encode_imgurl(img_tokens):
+            assert img_tokens[0] == self.image_start_tag and img_tokens[-1] == self.image_end_tag
+            img_tokens = img_tokens[1:-1]
+            img_url = b''.join(img_tokens)
+            out_img_tokens = list(map(self.decoder.get, img_url))
+            if len(out_img_tokens) > IMG_TOKEN_SPAN:
+                raise ValueError("The content in {}..{} is too long".format(
+                    self.image_start_tag, self.image_end_tag))
+            
+            out_img_tokens.extend([self.image_pad_tag] * (IMG_TOKEN_SPAN - len(out_img_tokens)))
+            out_img_tokens = [self.image_start_tag] + out_img_tokens + [self.image_end_tag]
+            return out_img_tokens
+
+        # Replace closed tags for audio and image tokens
+        tokens = _replace_closed_tag(
+            tokens,
+            start_tags=(self.audio_start_tag, self.image_start_tag),
+            end_tags=(self.audio_end_tag, self.image_end_tag),
+            inclusive_replace_func=lambda x, audio_info, idx: (
+                _encode_audiourl(x, audio_info, idx) if x[0] == self.audio_start_tag else _encode_imgurl(x)
+            ),
+            audio_info=audio_info
+        )
+
+        return tokens
 
     def _batch_encode_plus(
             self,
@@ -524,20 +605,29 @@ class QWenTokenizer(PreTrainedTokenizer):
 
     def from_list_format(self, list_format: List[Dict]):
         text = ''
+        image_start_tag='<img>'
+        image_end_tag='</img>'
         num_audios = 0
+        num_images = 0
+        audio_start_tag, audio_end_tag = '<audio>', '</audio>'
         for ele in list_format:
-            if 'audio' in ele:
-                num_audios += 1
-                text += f'Audio {num_audios}:'
-                text += self.audio_start_tag + ele['audio'] + self.audio_end_tag
-                text += '\n'
-            elif 'text' in ele:
-                text += ele['text']
-            elif 'box' in ele:
-                if 'ref' in ele:
-                    text += self.ref_start_tag + ele['ref'] + self.ref_end_tag
-                for box in ele['box']:
-                    text += self.box_start_tag + '(%d,%d),(%d,%d)' % (box[0], box[1], box[2], box[3]) + self.box_end_tag
+            # import ipdb; ipdb.set_trace()
+            if 'image' in ele or 'audio' in ele or 'text' in ele:
+                # ! add the process of image.
+                if 'image' in ele:
+                    num_images += 1
+                    text += f'Picture {num_images}: '
+                    text += image_start_tag + ele['image'] + image_end_tag
+                    text += '\n'
+                    
+                if 'audio' in ele:
+                    num_audios += 1
+                    text += f'Audio {num_audios}:'
+                    text += audio_start_tag + ele['audio'] + audio_end_tag
+                    text += '\n'
+                if 'text' in ele:
+                    text += ele['text']
+
             else:
                 raise ValueError("Unsupport element: " + str(ele))
         return text

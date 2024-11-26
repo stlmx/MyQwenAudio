@@ -115,9 +115,10 @@ def get_stop_words_ids(chat_format, tokenizer):
         raise NotImplementedError(f"Unknown chat format {chat_format!r}")
     return stop_words_ids
 
+from tokenization_qwen import QWenTokenizer
 
 def make_context(
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: QWenTokenizer,
     query: str,
     history: List[Tuple[str, str]] = None,
     system: str = "",
@@ -138,8 +139,8 @@ def make_context(
             # import ipdb; ipdb.set_trace()
             audio_info = tokenizer.process_audio(content)
             return f"{role}\n{content}", tokenizer.encode(
-                role, allowed_special=set(tokenizer.AUDIO_ST), audio_info=audio_info
-            ) + nl_tokens + tokenizer.encode(content, allowed_special=set(tokenizer.AUDIO_ST), audio_info=audio_info),audio_info
+                role, allowed_special=set(tokenizer.AUDIO_ST + tokenizer.IMAGE_ST), audio_info=audio_info
+            ) + nl_tokens + tokenizer.encode(content, allowed_special=set(tokenizer.AUDIO_ST + tokenizer.IMAGE_ST), audio_info=audio_info),audio_info
 
         system_text, system_tokens_part, audio_info = _tokenize_str("system", system)
         system_tokens = im_start_tokens + system_tokens_part + im_end_tokens

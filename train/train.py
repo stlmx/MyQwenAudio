@@ -18,6 +18,10 @@ from transformers.trainer_pt_utils import LabelSmoother
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from accelerate.utils import DistributedType
 
+import sys
+sys.path.append("/root/codes/MyQwenAudio")
+from modeling_qwen_dev import QWenLMHeadOmniModel
+from tokenization_qwen import QWenTokenizer
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -53,15 +57,22 @@ class TrainingArguments(transformers.TrainingArguments):
 
 @dataclass
 class LoraArguments:
-    lora_r: int = 64
+    lora_r: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.05
-    lora_target_modules: List[str] = field(
-        default_factory=lambda: ["c_attn", "c_proj", "w1", "w2"]
-    )
     lora_weight_path: str = ""
     lora_bias: str = "none"
     q_lora: bool = False
+
+    # 动态生成 target_modules，排除 audio 和 visual
+    def generate_target_modules(self, model):
+        target_modules = []
+        for name, module in model.named_modules():
+            # 排除 audio 和 visual 部分
+            if "audio" not in name.lower() and "visual" not in name.lower():
+                if any(target in name for target in ["c_attn", "c_proj", "w1", "w2"]):
+                    target_modules.append(name)
+        return target_modules
 
 
 def maybe_zero_3(param):
@@ -125,18 +136,32 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
 
 def from_list_format(list_format: List[Dict]):
     text = ''
+    image_start_tag='<img>'
+    image_end_tag='</img>'
     num_audios = 0
+    num_images = 0
     audio_start_tag, audio_end_tag = '<audio>', '</audio>'
     for ele in list_format:
-        if 'audio' in ele:
-            num_audios += 1
-            text += f'Audio {num_audios}:'
-            text += audio_start_tag + ele['audio'] + audio_end_tag
-            text += '\n'
-        elif 'text' in ele:
-            text += ele['text']
+        # import ipdb; ipdb.set_trace()
+        if 'image' in ele or 'audio' in ele or 'text' in ele:
+            # ! add the process of image.
+            if 'image' in ele:
+                num_images += 1
+                text += f'Picture {num_images}: '
+                text += image_start_tag + ele['image'] + image_end_tag
+                text += '\n'
+                
+            if 'audio' in ele:
+                num_audios += 1
+                text += f'Audio {num_audios}:'
+                text += audio_start_tag + ele['audio'] + audio_end_tag
+                text += '\n'
+            if 'text' in ele:
+                text += ele['text']
+
         else:
             raise ValueError("Unsupport element: " + str(ele))
+        
     return text
 
 
@@ -153,8 +178,8 @@ def preprocess(
     def _tokenize_str(role, content):
         audio_info = tokenizer.process_audio(content)          
         return f"{role}\n{content}", tokenizer.encode(
-            role, allowed_special=set(tokenizer.AUDIO_ST), audio_info=audio_info
-        ) + nl_token + tokenizer.encode(content, allowed_special=set(tokenizer.AUDIO_ST), audio_info=audio_info),audio_info
+            role, allowed_special=set(tokenizer.AUDIO_ST + tokenizer.IMAGE_ST), audio_info=audio_info
+        ) + nl_token + tokenizer.encode(content, allowed_special=set(tokenizer.AUDIO_ST + tokenizer.IMAGE_ST), audio_info=audio_info),audio_info
 
     # System Tokens
     system_text, system_tokens_part, _ = _tokenize_str("system", system_message)
@@ -173,7 +198,7 @@ def preprocess(
 
         for j, sentence in enumerate(source):
             if sentence["role"] == "user":
-                query = from_list_format([{"audio": sentence["audio"]}, {"text": sentence["content"]}])
+                query = from_list_format([{"audio": sentence["audio"]}, {"text": sentence["content"]}, {"image": sentence['image']}])
                 user_text, user_tokens, audio_info = _tokenize_str("user", query)
                 _input_id = [im_start] + user_tokens + [im_end] + nl_token
                 _target = [im_start] + [IGNORE_TOKEN_ID] * (len(_input_id)-3) + [im_end] + nl_token
@@ -335,7 +360,7 @@ def train():
                 "FSDP or ZeRO3 are incompatible with QLoRA."
             )
 
-    is_chat_model = 'chat' in model_args.model_name_or_path.lower()
+    is_chat_model =  "merged" in model_args.model_name_or_path.lower() # TODO add support for omni.
     if (
             training_args.use_lora
             and not lora_args.q_lora
@@ -355,31 +380,51 @@ def train():
     )
     config.use_cache = False
 
-    model = transformers.AutoModelForCausalLM.from_pretrained(
+    model = QWenLMHeadOmniModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
-        trust_remote_code=True,
-
+        # trust_remote_code=True,
     )
+    
+    # for param in model.transformer.visual.parameters():
+    #     zero.register_external_parameter(model, param)
+    #     # deepspeed.zero.register_external_parameter(model, param)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
+
+
+    # 冻结 visual 和 audio 部分的所有参数
+    for name, param in model.transformer.visual.named_parameters(): 
+        param.requires_grad = False
+
+    for name, param in model.transformer.visual.named_parameters(): 
+        if param.requires_grad == True:
+            print(f"The name is {name}.")
+
+
+    for param in model.transformer.audio.parameters():
+        param.requires_grad = False
+
+
+    tokenizer = QWenTokenizer.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
-        trust_remote_code=True,
+        # trust_remote_code=True,
     )
     tokenizer.pad_token_id = tokenizer.eod_id
 
     # import ipdb; ipdb.set_trace()
 
     if training_args.use_lora:
+        # * remove audio and visual from LoRA.
+        lora_target_modules = lora_args.generate_target_modules(model)
         lora_config = LoraConfig(
             r=lora_args.lora_r,
             lora_alpha=lora_args.lora_alpha,
-            target_modules=lora_args.lora_target_modules,
+            target_modules=lora_target_modules,
             lora_dropout=lora_args.lora_dropout,
             bias=lora_args.lora_bias,
             task_type="CAUSAL_LM",
@@ -397,10 +442,28 @@ def train():
         if training_args.gradient_checkpointing:
             model.enable_input_require_grads()
 
+    # import ipdb; ipdb.set_trace()
     # *********** Load Dataset & Trainer ***********
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length
     )
+
+    # # 冻结 visual 和 audio 部分的所有参数
+    # for name, param in model.transformer.visual.named_parameters(): 
+    #     param.requires_grad = False
+
+    for name, param in model.transformer.visual.named_parameters(): 
+        if param.requires_grad == True:
+            print(f"The name is {name}.")
+
+    for name, param in model.transformer.audio.named_parameters(): 
+        if param.requires_grad == True:
+            print(f"The name is {name}.")
+
+
+    # for param in model.transformer.audio.parameters():
+    #     param.requires_grad = False
+
 
     data_collator = CustomDataCollator(tokenizer=tokenizer)
     trainer = Trainer(

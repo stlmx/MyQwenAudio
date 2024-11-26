@@ -1,5 +1,6 @@
 import torch
 from peft import PeftModel
+from modeling_qwen_dev import QWenLMHeadOmniModel
 
 def merge_lora_weights(model: torch.nn.Module, lora_model_path: str):
     """
@@ -27,15 +28,15 @@ if __name__ == "__main__":
     from transformers import AutoModelForCausalLM
 
     # 加载原始模型
-    base_model = AutoModelForCausalLM.from_pretrained("/root/autodl-tmp/Qwen-Aduio-Chat")
+    base_model = QWenLMHeadOmniModel.from_pretrained("/root/autodl-tmp/hf_home/Qwen_Merged_Model")
 
     # 指定 LoRA 权重路径
-    lora_weights_path = "/root/codes/MyQwenAudio/scripts/save/qwen-audio-chat"
+    lora_weights_path = "/root/codes/MyQwenAudio/scripts/save/qwen-omni-chat"
 
     # 合并 LoRA 权重
     merged_model = merge_lora_weights(base_model, lora_weights_path)
     
     # 保存合并后的模型
-    merged_model.save_pretrained("/root/autodl-tmp/merged_model")
+    merged_model.save_pretrained("/root/autodl-tmp/merged_model_omni")
 
     print("Merged model has been saved to ./merged-model.")
