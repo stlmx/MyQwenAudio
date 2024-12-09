@@ -131,6 +131,9 @@ class QWenTokenizer(PreTrainedTokenizer):
             errors="replace",
             audio_start_tag='<audio>',
             audio_end_tag='</audio>',
+            unk_token="<|endoftext|>",
+            bos_token="<|endoftext|>",
+            eos_token="<|endoftext|>",
             **kwargs,
     ):
         super().__init__(**kwargs)
@@ -148,6 +151,10 @@ class QWenTokenizer(PreTrainedTokenizer):
         box_end_tag='</box>'
         quad_start_tag='<quad>'
         quad_end_tag='</quad>'
+
+        self.unk_token=unk_token
+        self.bos_token=bos_token
+        self.eos_token=eos_token
 
         self.image_start_tag = image_start_tag
         self.image_end_tag = image_end_tag
