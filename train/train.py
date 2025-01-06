@@ -19,7 +19,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from accelerate.utils import DistributedType
 
 import sys
-sys.path.append("/root/codes/MyQwenAudio")
+sys.path.append("/mnt/ssd_data/limingxuan/codes/MyQwenAudio")
 from modeling_qwen_dev import QWenLMHeadOmniModel
 from tokenization_qwen import QWenTokenizer
 
@@ -198,7 +198,19 @@ def preprocess(
 
         for j, sentence in enumerate(source):
             if sentence["role"] == "user":
-                query = from_list_format([{"audio": sentence["audio"]}, {"text": sentence["content"]}, {"image": sentence['image']}])
+
+                # if "image" in sentence.keys():
+                #     query = from_list_format([{"audio": sentence["audio"]}, {"text": sentence["content"]}, {"image": sentence['image']}])
+                # else:
+                #     query = from_list_format([{"audio": sentence["audio"]}, {"text": sentence["content"]}])
+                                             
+                # * 增加了灵活的处理模式，适用于多种数据模态缺失的情况
+                query_keys = sentence.keys() & ['image', 'audio'] # * 只保留对于image和audio的判断，所有的text都要保留
+                query_list = [{key: sentence[key]}  for key in query_keys]
+                query_list.append({"text": sentence["content"]})
+
+                query = from_list_format(query_list)
+
                 user_text, user_tokens, audio_info = _tokenize_str("user", query)
                 _input_id = [im_start] + user_tokens + [im_end] + nl_token
                 _target = [im_start] + [IGNORE_TOKEN_ID] * (len(_input_id)-3) + [im_end] + nl_token
@@ -322,9 +334,25 @@ def make_supervised_data_module(
 
 class CustomDataCollator(transformers.DataCollatorWithPadding):
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # 从features中分离出audio_info数据
         audio_infos = [feature.pop('audio_info', None) for feature in features]
+
+        # 备份原有设置
+        original_max_length = self.max_length
+        original_padding = self.padding
+
+        # 将padding策略设置为根据batch最大长度进行padding
+        self.max_length = None
+        self.padding = 'longest'
+
+        # 调用父类方法进行padding
         batch = super().__call__(features)
 
+        # 还原原始设置(以免影响其他地方使用此collator)
+        self.max_length = original_max_length
+        self.padding = original_padding
+
+        # 处理audio_info
         if any(audio_infos):
             audio_span_tokens = []
             for x in audio_infos:
@@ -373,24 +401,18 @@ def train():
         'low_cpu_mem_usage': not deepspeed.is_deepspeed_zero3_enabled(),
     }
 
-    config = transformers.AutoConfig.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        trust_remote_code=True,
-    )
-    config.use_cache = False
+    # config = transformers.AutoConfig.from_pretrained(
+    #     model_args.model_name_or_path,
+    #     cache_dir=training_args.cache_dir,
+    #     trust_remote_code=True,
+    # )
+    # config.use_cache = False
 
     model = QWenLMHeadOmniModel.from_pretrained(
         model_args.model_name_or_path,
-        config=config,
         cache_dir=training_args.cache_dir,
-        # trust_remote_code=True,
+        torch_dtype=torch.float16
     )
-    
-    # for param in model.transformer.visual.parameters():
-    #     zero.register_external_parameter(model, param)
-    #     # deepspeed.zero.register_external_parameter(model, param)
-
 
 
     # 冻结 visual 和 audio 部分的所有参数
@@ -405,18 +427,14 @@ def train():
     for param in model.transformer.audio.parameters():
         param.requires_grad = False
 
-
     tokenizer = QWenTokenizer.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
-        # trust_remote_code=True,
     )
     tokenizer.pad_token_id = tokenizer.eod_id
-
-    # import ipdb; ipdb.set_trace()
 
     if training_args.use_lora:
         # * remove audio and visual from LoRA.
@@ -448,10 +466,6 @@ def train():
         tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length
     )
 
-    # # 冻结 visual 和 audio 部分的所有参数
-    # for name, param in model.transformer.visual.named_parameters(): 
-    #     param.requires_grad = False
-
     for name, param in model.transformer.visual.named_parameters(): 
         if param.requires_grad == True:
             print(f"The name is {name}.")
@@ -459,11 +473,6 @@ def train():
     for name, param in model.transformer.audio.named_parameters(): 
         if param.requires_grad == True:
             print(f"The name is {name}.")
-
-
-    # for param in model.transformer.audio.parameters():
-    #     param.requires_grad = False
-
 
     data_collator = CustomDataCollator(tokenizer=tokenizer)
     trainer = Trainer(
