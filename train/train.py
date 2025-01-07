@@ -227,8 +227,8 @@ def preprocess(
             target += _target
         
         assert len(input_id) == len(target)
-        input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
-        target += [IGNORE_TOKEN_ID] * (max_len - len(target))
+        # input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
+        # target += [IGNORE_TOKEN_ID] * (max_len - len(target))
         audio_info = tokenizer.process_audio(raw_text)
 
         input_ids.append(input_id[:max_len])
