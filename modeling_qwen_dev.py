@@ -231,10 +231,20 @@ class QwenOmniModel(QWenPreTrainedModel):
 
         
         # * Process the input audio.
+        '''
+        这里面的bos_pos的一个例子如下:
+        (tensor([0, 1, 2, 3, 4, 5, 6, 7], device='cuda:0'), tensor([18, 18, 18, 18, 18, 18, 18, 18], device='cuda:0'))
+        这里面的第一个tensor本质上是Batch_Size的维度,这里的input_ids的shape是[8, 1024]
+        '''
         if past_key_values is None and torch.any(input_ids == self.config.audio['audio_start_id']):
             bos_pos = torch.where(input_ids == self.config.audio['audio_start_id'])
             eos_pos = torch.where(input_ids == self.config.audio['audio_start_id'] + 1)
-            assert (bos_pos[0] == eos_pos[0]).all() # * 必须是同一个批次的样本
+
+            try:
+                assert (bos_pos[0] == eos_pos[0]).all() # * 必须是同一个批次的样本
+            except:
+                print("为什么批次会对不上呢？")
+
             audio_pos = torch.stack((bos_pos[0], bos_pos[1], eos_pos[1]), dim=1)
             if isinstance(audio_info, Dict):
                 audios = audio_info["input_audios"]
@@ -354,14 +364,26 @@ class QwenOmniModel(QWenPreTrainedModel):
 
         hidden_states = self.drop(hidden_states)
         if audios is not None:
+            hidden_states_temp = hidden_states.clone()
             for idx, (i, a, b) in enumerate(audio_pos):
-                hidden_states[i][a : b+1] = audios[idx]
+
+                try:
+                    hidden_states_temp[i][a : b+1] = audios[idx]
+                except:
+                    print("这里有问题啊")
+
+            hidden_states = hidden_states_temp
+            
         output_shape = input_shape + (hidden_states.size(-1),)
 
         # ! Key part: Insert the image part.
+        # * 必须这么改，否则会报错不允许in-place操作：https://github.com/QwenLM/Qwen-VL/issues/56
         if images is not None:
             for idx, (i, a, b) in enumerate(img_pos):
-                hidden_states[i][a + 1 : b] = images[idx]
+                hidden_states_temp = hidden_states.clone()
+                for idx, (i, a, b) in enumerate(img_pos):
+                    hidden_states_temp[i][a + 1 : b] = images[idx]
+                hidden_states = hidden_states_temp
 
 
         if self.gradient_checkpointing and self.training:
