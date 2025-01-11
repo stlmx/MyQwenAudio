@@ -2,6 +2,49 @@ import torch
 from transformers import AutoModelForCausalLM
 from accelerate import dispatch_model
 
+import subprocess
+
+
+def detect_platform():
+    """
+    检测当前集群平台，返回字符串：
+    - 'huawei' 表示华为平台
+    - 'nvidia' 表示 NVIDIA 平台
+    - 'unknown' 表示无法检测到，或者非上述两种平台
+    """
+
+    # 检测华为平台
+    try:
+        # 尝试执行 npu-smi info 查看输出
+        result = subprocess.run(
+            ["npu-smi", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        if result.returncode == 0:
+
+            return "huawei"
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    # 检测 NVIDIA 平台
+    try:
+        # 尝试执行 nvidia-smi 查看输出
+        result = subprocess.run(
+            ["nvidia-smi"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        if result.returncode == 0:
+            return "nvidia"
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    # 如果都没检测到
+    return "unknown"
+
 
 def _device_map(num_gpus, num_layers):
     per_gpu_layers = (num_layers + 2) / num_gpus

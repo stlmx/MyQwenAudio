@@ -1,25 +1,41 @@
-# This code is based on the revised code from fastchat based on tatsu-lab/stanford_alpaca.
+# This code is developed by Li Mingxuan.
+
+from utils import detect_platform
+platform = detect_platform()
+
+if platform == "huawei":
+    import os
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+
+    import torch
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
+
+
+elif platform == "nvidia":
+    import torch
+
+else:
+    raise EnvironmentError("Unsupported platform: cannot import torch.")
 
 
 from dataclasses import dataclass, field
 import json
-import math
 import logging
 import os
 import pathlib
 from typing import Dict, Optional, List, Any
-import torch
+
 from torch.utils.data import Dataset
 from deepspeed import zero
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
 import transformers
-from transformers import Trainer, GPTQConfig, deepspeed
+from transformers import Trainer, deepspeed
 from transformers.trainer_pt_utils import LabelSmoother
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from accelerate.utils import DistributedType
 
-import sys
-sys.path.append("/mnt/ssd_data/limingxuan/codes/MyQwenAudio")
 from modeling_qwen_dev import QWenLMHeadOmniModel
 from tokenization_qwen import QWenTokenizer
 
