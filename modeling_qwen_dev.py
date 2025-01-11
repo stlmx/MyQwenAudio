@@ -366,24 +366,18 @@ class QwenOmniModel(QWenPreTrainedModel):
         if audios is not None:
             hidden_states_temp = hidden_states.clone()
             for idx, (i, a, b) in enumerate(audio_pos):
-
-                try:
-                    hidden_states_temp[i][a : b+1] = audios[idx]
-                except:
-                    print("这里有问题啊")
-
+                hidden_states_temp[i][a : b+1] = audios[idx]
             hidden_states = hidden_states_temp
-            
+
         output_shape = input_shape + (hidden_states.size(-1),)
 
         # ! Key part: Insert the image part.
         # * 必须这么改，否则会报错不允许in-place操作：https://github.com/QwenLM/Qwen-VL/issues/56
         if images is not None:
+            hidden_states_temp = hidden_states.clone()
             for idx, (i, a, b) in enumerate(img_pos):
-                hidden_states_temp = hidden_states.clone()
-                for idx, (i, a, b) in enumerate(img_pos):
-                    hidden_states_temp[i][a + 1 : b] = images[idx]
-                hidden_states = hidden_states_temp
+                hidden_states_temp[i][a + 1 : b] = images[idx]
+            hidden_states = hidden_states_temp
 
 
         if self.gradient_checkpointing and self.training:
